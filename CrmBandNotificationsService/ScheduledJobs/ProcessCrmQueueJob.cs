@@ -2,10 +2,9 @@
 using Microsoft.ServiceBus.Messaging;
 using Microsoft.ServiceBus.Notifications;
 using Microsoft.WindowsAzure.Mobile.Service;
+using Microsoft.Xrm.Sdk;
 using System;
-using System.IO;
 using System.Threading.Tasks;
-using System.Xml;
 
 namespace CrmBandNotificationsService
 {
@@ -16,6 +15,7 @@ namespace CrmBandNotificationsService
         private const string IssuerSecret = "Azure Service Bus - CRM Namespace - Default Key";
         private const string ServiceNamespace = "Azure Service Bus - CRM Namespace Name";
         private const string QueueName = "Azure Service Bus - CRM Namespace - Queue Name";
+
         private const string NotificationHubConnectionString = "Azure Service Bus - Notification Hub - DefaultFullSharedAccessSignature";
         private const string NotificationHubName = "Azure Service Bus - Notification Hub - Name";
         public override Task ExecuteAsync()
@@ -29,45 +29,13 @@ namespace CrmBandNotificationsService
             BrokeredMessage message;
             while ((message = myQueueClient.Receive(new TimeSpan(0, 0, 5))) != null)
             {
-                Stream stream = message.GetBody<Stream>();
-                StreamReader reader = new StreamReader(stream);
-                string s = reader.ReadToEnd();
+                RemoteExecutionContext ex = message.GetBody<RemoteExecutionContext>();
 
-                XmlDocument document = new XmlDocument();
-                document.LoadXml(s); 
-                XmlNamespaceManager manager = new XmlNamespaceManager(document.NameTable);
-                manager.AddNamespace("s", "http://www.w3.org/2003/05/soap-envelope");
-                manager.AddNamespace("a", "http://www.w3.org/2005/08/addressing");
-                manager.AddNamespace("i", "http://www.w3.org/2001/XMLSchema-instance");
-                manager.AddNamespace("b", "http://schemas.datacontract.org/2004/07/System.Collections.Generic");
-                manager.AddNamespace("c", "http://www.w3.org/2001/XMLSchema");
-                manager.AddNamespace("r", "http://schemas.microsoft.com/xrm/2011/Contracts");
+                Entity pushNotification = (Entity)ex.InputParameters["Target"];
 
-                XmlNode envelope = document.SelectSingleNode("s:Envelope", manager);
-                XmlNode body = envelope.SelectSingleNode("s:Body", manager);
-                XmlNode rec = body.SelectSingleNode("r:RemoteExecutionContext", manager);
-                XmlNode ip = rec.SelectSingleNode("r:InputParameters", manager);
-                XmlNode kvp = ip.SelectSingleNode("r:KeyValuePairOfstringanyType", manager);
-                XmlNode val = kvp.SelectSingleNode("b:value", manager);
-                XmlNode attr = val.FirstChild;
-                XmlNodeList kvps = attr.ChildNodes;
-
-                string ownerId = string.Empty;
-                string subject = string.Empty;
-                foreach (XmlNode node in kvps)
-                {
-                    XmlNode k = node.SelectSingleNode("b:key", manager);
-                    if (k.InnerText == "lat_recipient")
-                    {
-                        XmlNode value = node.SelectSingleNode("b:value", manager);
-                        ownerId = value.FirstChild.InnerText;
-                    }
-                    if (k.InnerText == "lat_message")
-                    {
-                        XmlNode value = node.SelectSingleNode("b:value", manager);
-                        subject = value.LastChild.InnerText;
-                    }
-                }
+                //Make sure Recipient is populated
+                var ownerId = pushNotification.GetAttributeValue<EntityReference>("lat_recipient").Id.ToString();
+                var subject = pushNotification.GetAttributeValue<string>("lat_message");
 
                 SendNotificationAsync(subject, ownerId);
                 message.Complete();
@@ -84,10 +52,10 @@ namespace CrmBandNotificationsService
 
             //content-available = 1 makes sure ReceivedRemoteNotification in 
             //AppDelegate.cs get executed when the app is closed
-            var alert = "{\"aps\":{\"alert\":\"" + message + "\", \"content-available\" : \"1\"}}";  
+            var alert = "{\"aps\":{\"alert\":\"" + message + "\", \"content-available\" : \"1\"}}";
 
             //Would need to handle Windows & Android separately
-            await hub.SendAppleNativeNotificationAsync(alert, userid);           
+            await hub.SendAppleNativeNotificationAsync(alert, userid);
         }
     }
 }
